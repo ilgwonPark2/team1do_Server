@@ -19,27 +19,8 @@ property database BusDB
 
 
 
-
 service id connect
   on start https.send thingplugpf.sktiot.com 9443 /$system.AppEUI$/v1_0/remoteCSE-$system.LTID$/container-LoRa POST $system.connect_body$ {"X-M2M-RI":"$system.X-M2M-RI$","X-M2M-Origin":"$system.X-M2M-Origin$","X-M2M-NM":"$system.X-M2M-NM$","uKey":"$system.uKey$","Content-Type":"$system.content_type_connect$"}
-exit
-service id get_bus_data
-  on start
-    http.send ws.bus.go.kr 80 /api/rest/buspos/getBusPosByRtid GET "" {} {"serviceKey":"/lGKaos/Ylfttaf7fO9+7SwZ9UjlA8x0FUyXfnTut8I2T8pP6g/xNbcUuU591ilyIPa851EvrPZ8kQ9PvecrXQ==","busRouteId":"110900008"}
-    system.property.write xml_data (text.replace "$last.body" "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" "")
-  exit
-exit
-service id get_bus_info
-  on start
-    http.send ws.bus.go.kr 80 /api/rest/arrive/getLowArrInfoByRoute GET "" {} {"serviceKey":"/lGKaos/Ylfttaf7fO9+7SwZ9UjlA8x0FUyXfnTut8I2T8pP6g/xNbcUuU591ilyIPa851EvrPZ8kQ9PvecrXQ==","stId":"113000202","busRouteId":"100100332","ord":"36"}
-    system.property.write station_data (text.replace "$last.body" "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" "")
-  exit
-exit
-service id get_low_bus_data
-  on start
-    http.send ws.bus.go.kr 80 /api/rest/arrive/getLowArrInfoByStId GET "" {} {"serviceKey":"/lGKaos/Ylfttaf7fO9+7SwZ9UjlA8x0FUyXfnTut8I2T8pP6g/xNbcUuU591ilyIPa851EvrPZ8kQ9PvecrXQ==","stId":"101000004"}
-    system.property.write low_bus_data (text.replace "$last.body" "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" "")
-  exit
 exit
 service id send_data
   on start https.send thingplugpf.sktiot.com 9443 /$system.AppEUI$/v1_0/mgmtCmd-$system.LTID$_extDevMgmt PUT $system.send_body$ {"Accpet":"$system.accept$","X-M2M-RI":"$system.X-M2M-RI$","X-M2M-Origin":"$system.X-M2M-Origin$","uKey":"$system.uKey$","Content-Type":"$system.content_type_send$"}
@@ -58,6 +39,13 @@ service id test
     https.send thingplugpf.sktiot.com 9443 /$system.AppEUI$/v1_0/remoteCSE-$system.LTID$/container-LoRa POST $system.connect_body$ $last
   exit
 exit
+
+service id get_low_bus_data
+  on start
+    http.send ws.bus.go.kr 80 /api/rest/arrive/getLowArrInfoByStId GET "" {} {"serviceKey":"/lGKaos/Ylfttaf7fO9+7SwZ9UjlA8x0FUyXfnTut8I2T8pP6g/xNbcUuU591ilyIPa851EvrPZ8kQ9PvecrXQ==","stId":"101000004"}
+    system.property.write low_bus_data (text.replace "$last.body" "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" "")
+  exit
+exit
 service id send_data_to_ws
   on start
     bus_data1 = $system.low_bus_data
@@ -66,6 +54,7 @@ service id send_data_to_ws
     debug bus_data1 $content
   exit
 exit
+
 service id orientdb_rest
   # $1 ~> SQL statement
   on start
@@ -77,13 +66,13 @@ service id orientdb_rest
   exit
 exit
 
-service id test2
+service id xmlParser
  on start
     a = 1
-    (while (service xmlParser $a "501") (a = add $a 1))
+    (while (service xmlParser_checker $a $1) (a = add $a 1))
  exit
 exit
-service id xmlParser
+service id xmlParser_checker
  on start
     a = $1
     debug d1 $a
@@ -92,11 +81,22 @@ service id xmlParser
     debug last $last
  exit
 exit
+service id xmlParser_plainNo
+ on start
+  # $1 ~> PlainNo  $2 ~> index   $3 ~> bus_num
+   xml.xpath $system.low_bus_data */*/plainNo$1$[$2$]
+   do (text.replace $last "<?xml version=\"1.0\"?><plainNo1>" "") (text.replace $last "</plainNo1>" "")
+ exit
+exit
+
 interface id webserver
   on #
     if (text.starts_with $data.path /api) (return (event $data.path))
     if (text.equals $data.path /) (return (file.read "$system.dir$/index.html"))
     file.read (text.join $system.dir $data.path)
+  exit
+  on /api/init
+    service send_data_to_ws
   exit
   on /api/send_data
     service send_data
@@ -108,11 +108,18 @@ interface id webserver
   on /api/get_xml_data
     return $system.station_data
   exit
-  on /api/init
-    service send_data_to_ws
+  on /api/reserve_Bus
+    busNum = $data.body.contents.bus_num
+    pNum = $data.body.contents.p_num
+    debug busNum $busNum
+    debug pNum $pNum
+    index = (service xmlParser $busNum)
+    debug idx $index
+    service xmlParser_plainNo $pNum $index $busNum
+    debug plnNo $last
   exit
   type http server
-  port 8888
+  port 4444
 exit
 
 interface id websocket_server
